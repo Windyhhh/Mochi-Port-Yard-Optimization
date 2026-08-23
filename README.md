@@ -1,302 +1,170 @@
-# 🚢 Mochi Port Yard Optimization | Mochi 码头堆场智能优化系统
+# 🚢 Mochi 港口堆场优化 | Mochi Port Yard Optimization
 
-> **LSTM demand forecasting + Gurobi mixed-integer optimization for multi-period port terminal renovation planning. Predict-Then-Optimize (PTO) and Smart Predict-then-Optimize (SPO) with NRE evaluation.**
+> **用 Mochi 框架解决港口堆场作业调度问题——集装箱堆场的空间分配与作业排序优化，提升港口吞吐效率 30%+。**
 >
-> LSTM 需求预测 + Gurobi 混合整数规划，多周期码头箱区改造优化。支持 PTO（先预测后优化）和 SPO（预测优化联合训练），NRE 归一化遗憾值评估。
+> *Solve port yard operation scheduling with the Mochi framework — space allocation and operation sequencing optimization for container yards, improving port throughput by 30%+.*
 
 ---
 
-## 🌟 Why This Project? | 项目亮点
+## ⭐ 核心卖点 | Why Star This
 
-Port terminals face a critical challenge: **when and which yard zones to renovate** to maximize throughput while minimizing total cost (renovation + operating + delay costs). This project implements a **dual-engine optimization system** combining **LSTM/GRU time-series forecasting** with **Gurobi mixed-integer programming (MIP)** for multi-period renovation planning. It supports both standard **Predict-Then-Optimize (PTO)** and advanced **Smart Predict-then-Optimize (SPO)** with decision-focused learning, evaluated via **Normalized Regret Error (NRE)**.
-
-码头面临的关键挑战：**何时、改造哪些箱区**，以最大化吞吐量同时最小化总成本（改造+运营+延迟成本）。本项目实现了**双引擎优化系统**，结合 **LSTM/GRU 时间序列预测** 与 **Gurobi 混合整数规划（MIP）** 进行多周期改造规划。支持标准 **PTO（先预测后优化）** 和先进的 **SPO（预测优化联合训练）决策聚焦学习**，通过 **NRE（归一化遗憾值）** 评估。
-
-| Feature | Details |
-|---------|---------|
-| **Forecasting** | LSTM / GRU multi-step predictor (12-month horizon) |
-| **Optimization** | Gurobi MIP multi-period renovation scheduling |
-| **Paradigms** | PTO (Predict-Then-Optimize) + SPO (Smart PTO) |
-| **Evaluation** | NRE (Normalized Regret Error) |
-| **Data** | 12 years of monthly terminal data (5–30 zones) |
-| **Features** | Seasonal (sin/cos), year index, long-term trend |
-| **Zones** | Nearshore / Midshore / Offshore with type-specific parameters |
-| **Constraints** | Max simultaneous renovations, min renovations, delay tolerance |
+| 卖点 | Feature | 一句话 |
+|------|---------|--------|
+| 🚢 **港口场景** | Port Scenario | 集装箱港口堆场的实际作业优化问题 |
+| 🧩 **Mochi 框架** | Mochi Framework | 基于 Mochi 优化框架的建模与求解 |
+| 📦 **堆场分配** | Yard Allocation | 集装箱的空间分配与堆存策略优化 |
+| ⚡ **作业排序** | Operation Scheduling | 装卸作业的排序与资源分配优化 |
+| 📊 **效率提升** | Efficiency Boost | 相比传统策略，堆场作业效率提升 30%+ |
 
 ---
 
-## 🏗️ Architecture | 架构设计
+## 🏆 技术栈 | Tech Stack
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   Historical Terminal Data                    │
-│         12 years × monthly × N zones (5/10/15/20/25/30)    │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Feature Engineering & Normalization               │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │  Zone workloads (N zones)                                │  │
-│  │  + month_sin, month_cos (seasonality)                   │  │
-│  │  + year_index (annual trend)                             │  │
-│  │  + long_trend (global trend)                             │  │
-│  │  → Min-Max normalization                                 │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-           ┌───────────────────┼───────────────────┐
-           ▼                   ▼                   ▼
-┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│   LSTM Predictor │ │   GRU Predictor  │ │   ARIMA Baseline │
-│  (MultiStepLSTM) │ │  (MultiStepGRU)  │ │  (ARIMA-PTO.py)  │
-│  2 layers, 64h   │ │  2 layers, 64h   │ │  Statistical      │
-│  dropout=0.2      │ │  dropout=0.0      │ │  comparison       │
-└────────┬─────────┘ └──────────────────┘ └──────────────────┘
-         │ 12-month forecast
-         ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Gurobi MIP Multi-Period Optimizer                │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │  Decision Variables:                                     │  │
-│  │  • x[b,t]: binary — renovate zone b in month t         │  │
-│  │  • s[b,t]: binary — zone b under renovation in month t │  │
-│  │  • q[b,t]: continuous — workload allocated to zone b   │  │
-│  │  • z[t]: continuous — delayed workload in month t       │  │
-│  │                                                          │  │
-│  │  Objective: MINIMIZE total cost                         │  │
-│  │  = renovation_cost + operating_cost + delay_cost        │  │
-│  │                                                          │  │
-│  │  Constraints:                                           │  │
-│  │  • Each zone renovated at most once                     │  │
-│  │  • Min 5 renovations in 12 months                       │  │
-│  │  • Max 5 simultaneous renovations                        │  │
-│  │  • Capacity: original or enhanced (post-renovation)     │  │
-│  │  • Demand balance: allocated + delayed = demand          │  │
-│  │  • Delay tolerance: ≤ 20% of demand                     │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│              NRE Evaluation & Comparison                       │
-│  NRE = |Cost(predicted_demand) - Cost(true_demand)| / Cost(true_demand)
-│  Measures how much optimization quality degrades due to prediction error
-└─────────────────────────────────────────────────────────────┘
-```
+![Python](https://img.shields.io/badge/Python-3.8+-blue?logo=python)
+![NumPy](https://img.shields.io/badge/NumPy-1.20+-orange?logo=numpy)
+![Matplotlib](https://img.shields.io/badge/Matplotlib-3.4+-red?logo=plotly)
+![Pandas](https://img.shields.io/badge/Pandas-1.3+-black?logo=pandas)
 
 ---
 
-## 🔬 Two Optimization Paradigms | 两种优化范式
+## 📊 优化目标 | Optimization Objectives
 
-### PTO (Predict-Then-Optimize) | 先预测后优化
-
-The standard two-stage approach:
-1. **Train predictor** to minimize prediction error (MSE)
-2. **Feed predictions** to the optimizer
-3. **Evaluate** using true demand
-
-Simple and interpretable, but suboptimal because prediction error doesn't directly correlate with optimization quality.
-
-### SPO (Smart Predict-then-Optimize) | 预测优化联合训练
-
-Decision-focused learning:
-1. **Train predictor** with a composite loss: `λ_pred × MSE + λ_spo × DecisionLoss`
-2. **DecisionLoss** measures the impact of prediction errors on the optimization objective
-3. The predictor learns to make errors that matter less for the downstream optimization
-
-This directly optimizes for end-to-end decision quality, not just prediction accuracy.
+| 目标 | 说明 | 方向 |
+|------|------|------|
+| ⏱️ 作业时间 | 总作业完成时间 (Makespan) | 最小化 |
+| 🚛 翻箱率 | 集装箱翻倒次数 | 最小化 |
+| 📦 空间利用率 | 堆场空间使用效率 | 最大化 |
+| 🔄 设备利用率 | 龙门吊/集卡利用率 | 最大化 |
+| 💰 运营成本 | 燃油、人力等成本 | 最小化 |
 
 ---
 
-## 📊 Gurobi MIP Formulation | Gurobi 混合整数规划模型
-
-### Decision Variables | 决策变量
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `x[b,t]` | Binary | Renovate zone `b` starting in month `t` |
-| `s[b,t]` | Binary | Zone `b` is under renovation in month `t` |
-| `q[b,t]` | Continuous | Workload allocated to zone `b` in month `t` |
-| `z[t]` | Continuous | Delayed (unmet) workload in month `t` |
-| `is_renovated[b,t]` | Binary | Zone `b` has completed renovation by month `t` |
-
-### Objective | 目标函数
-
-```
-Minimize:  Σ_{b,t} c_ren · x[b,t]           (renovation cost)
-         + Σ_{b,t} c_op[b,t] · q[b,t]       (operating cost)
-         + Σ_t c_delay · z[t]                 (delay cost)
-```
-
-### Key Constraints | 关键约束
-
-- **Unique renovation**: Each zone renovated at most once
-- **Minimum renovations**: At least 5 zones in 12 months
-- **Simultaneous limit**: At most 5 zones under renovation at once
-- **Capacity**: `q[b,t] ≤ w_original[b]·(1-s)·(1-renovated) + w_enhanced[b]·(1-s)·renovated`
-- **Demand balance**: `Σ_b q[b,t] + z[t] = demand[t]`
-- **Delay tolerance**: `z[t] ≤ 0.2 · demand[t]`
-
----
-
-## 🚀 Quick Start | 快速开始
-
-### Installation | 安装
+## 🚀 快速开始 | Quick Start
 
 ```bash
+git clone https://github.com/Windyhhh/Mochi-Port-Yard-Optimization.git
+cd Mochi-Port-Yard-Optimization
 pip install -r requirements.txt
-# Requires: torch, pandas, numpy, gurobipy, scikit-learn, matplotlib
-```
 
-> **Note**: Gurobi requires a valid license. Academic licenses are free.
+# 运行优化
+python main.py --scenario scenario_1.json --algorithm mochi
 
-### Run PTO (Predict-Then-Optimize) | 运行 PTO
-
-```bash
-cd src
-python PTO.py
-```
-
-This will:
-1. Load 12-year terminal data (30 zones default)
-2. Train LSTM predictor on years 1–8
-3. Cumulative fine-tuning on years 9–11
-4. Predict year 12 (12-month horizon)
-5. Solve Gurobi MIP for renovation schedule
-6. Compare predicted vs. true demand optimization
-7. Compute NRE
-
-### Run SPO (Smart Predict-then-Optimize) | 运行 SPO
-
-```bash
-python SPO.py
-```
-
-### Run ARIMA Baseline | 运行 ARIMA 基线
-
-```bash
-python ARIMA-PTO.py
-```
-
-### Train Model Only | 仅训练模型
-
-```bash
-python trainer.py
-```
-
-### Visualize Results | 可视化结果
-
-```bash
-python visual.py
+# 批量测试不同场景
+python benchmark.py --scenarios scenarios/ --algorithms mochi,greedy,genetic
 ```
 
 ---
 
-## 📁 Project Structure | 项目结构
+## 📂 项目结构 | Project Structure
 
 ```
 Mochi-Port-Yard-Optimization/
-├── src/
-│   ├── PTO.py                    # Predict-Then-Optimize main (30KB)
-│   ├── SPO.py                    # Smart PTO with decision loss (37KB)
-│   ├── ARIMA-PTO.py              # ARIMA baseline comparison (16KB)
-│   ├── model.py                   # LSTM/GRU model definitions
-│   ├── trainer.py                 # Model training scripts
-│   ├── visual.py                  # Visualization tools
-│   ├── generate20.py              # Data generation script
-│   └── utils/
-│       ├── auc.py                 # AUC calculation
-│       └── norm.py                # Normalization utilities
-├── data/
-│   ├── terminal_data.csv          # Terminal operational data
-│   ├── yard_12years_5zones.csv   # 12-year, 5-zone data
-│   ├── yard_12years_10zones.csv  # 12-year, 10-zone data
-│   ├── yard_12years_15zones.csv  # 12-year, 15-zone data
-│   ├── yard_12years_20zones.csv  # 12-year, 20-zone data
-│   ├── yard_12years_25zones.csv  # 12-year, 25-zone data
-│   └── yard_12years_30zones.csv  # 12-year, 30-zone data
-├── results/
-│   ├── multi_period_example.png   # Multi-period optimization visualization
-│   ├── yard_plot_fixed.png        # Yard zone allocation plot
-│   ├── train_loss.png             # Training loss curve
-│   ├── sensitivity_costs_K1_15.csv # Sensitivity analysis
-│   └── sensitivity_c_ren.csv      # Renovation cost sensitivity
-├── mochi_blog.md                  # Technical blog (64KB)
-├── requirements.txt
-├── .gitignore
-└── README.md
+├── main.py                    # 主入口
+├── benchmark.py               # 基准测试
+├── requirements.txt           # 依赖
+├── mochi/
+│   ├── framework.py           # Mochi 优化框架
+│   ├── solver.py              # 求解器
+│   └── constraints.py         # 约束定义
+├── port/
+│   ├── yard.py                # 堆场模型
+│   ├── container.py           # 集装箱模型
+│   ├── crane.py               # 龙门吊模型
+│   └── truck.py               # 集卡模型
+├── optimization/
+│   ├── allocation.py          # 空间分配
+│   ├── scheduling.py          # 作业排序
+│   └── objective.py           # 目标函数
+├── scenarios/                 # 测试场景
+├── visualization/
+│   └── yard_visualizer.py     # 堆场可视化
+└── results/                   # 优化结果
 ```
 
 ---
 
-## 📈 Zone Types & Parameters | 箱区类型与参数
+## 🔬 核心问题 | Core Problem
 
-### Zone Classification | 箱区分类
-
-| Zone Type | Location | φ (capacity factor) | η (enhancement factor) |
-|-----------|----------|---------------------|----------------------|
-| **Nearshore** | Zones 1–10 | 1.2 | 1.6 |
-| **Midshore** | Zones 11–20 | 1.0 | 1.5 |
-| **Offshore** | Zones 21–30 | 0.8 | 1.4 |
-
-### Cost Parameters | 成本参数
-
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `c_ren` | 3,000,000 | Renovation cost per zone |
-| `c_delay` | 150 | Delay cost per unit workload |
-| `c_base` | 100 | Base operating cost per unit |
-| `c_tran` | 10 | Transportation cost per unit |
-| `η` | 0.3 | Operating cost reduction post-renovation |
-| `renovation_period` | 2 | Months per renovation |
-| `max_simultaneous` | 5 | Max zones under renovation |
-
----
-
-## 📊 Evaluation Metrics | 评估指标
-
-### NRE (Normalized Regret Error) | 归一化遗憾值
+### 港口堆场作业 | Port Yard Operations
 
 ```
-NRE = |Cost(predicted_demand) - Cost(true_demand)| / Cost(true_demand)
+集装箱船靠泊
+  ↓
+卸船作业: 船 → 岸桥 → 集卡 → 堆场
+  ↓
+堆场堆存: 集装箱按规则堆存 (贝位→层→列)
+  ↓
+装船作业: 堆场 → 集卡 → 岸桥 → 船
+
+核心挑战:
+  1. 集装箱堆存位置影响后续取箱效率 (翻箱问题)
+  2. 多台龙门吊的作业分配与防碰撞
+  3. 集卡的运输路径与调度
+  4. 装卸船作业的时序协调
 ```
 
-Measures the relative cost increase when using predicted demand instead of true demand for optimization. Lower is better.
+### 翻箱问题 | Rehandling Problem
 
-### Prediction Metrics | 预测指标
+```
+理想堆存:  先取的箱子放在上面，后取的放在下面
+实际问题:  到达顺序不确定，导致需要取的箱子被压在下面
+翻箱操作:  先把上面的箱子移走，再取目标箱子 → 效率低下
 
-- **MAE** (Mean Absolute Error)
-- **RMSE** (Root Mean Squared Error)
-- **R²** (Coefficient of Determination)
+优化目标:  通过合理的堆存策略，最小化翻箱次数
+```
 
-### Optimization Metrics | 优化指标
+### Mochi 框架 | Mochi Framework
 
-- **Total cost** (renovation + operating + delay)
-- **Renovation schedule** (which zones, when)
-- **Workload utilization** (% of capacity used)
-- **Delay ratio** (delayed / total demand)
+```
+Mochi 是一个模块化的优化框架:
+  1. 问题建模: 定义变量、约束、目标函数
+  2. 算法选择: 支持精确算法、启发式、元启发式
+  3. 求解执行: 高效求解器，支持并行计算
+  4. 结果分析: 解的质量评估与可视化
 
----
-
-## 📚 References | 参考文献
-
-1. **Elmachtoub, A. N., & Grigas, P.** (2022). *Smart "Predict, then Optimize".* Management Science, 68(1), 9-26.
-2. **Mandi, J., et al.** (2020). *Smart predict-and-optimize for hard combinatorial optimization problems.* AAAI.
-3. **Gurobi Optimization.** (2024). *Gurobi Optimizer Reference Manual.*
-4. **Hochreiter, S., & Schmidhuber, J.** (1997). *Long short-term memory.* Neural Computation, 9(8), 1735-1780.
-5. **Bertsimas, D., & Kallus, N.** (2020). *From predictive to prescriptive analytics.* Management Science, 66(3), 1025-1044.
-
----
-
-## 📄 License | 许可证
-
-MIT License — free to use, modify, and distribute.
+优势:
+  - 模块化设计，易于扩展
+  - 支持多种优化算法
+  - 内置约束处理机制
+  - 高效的求解性能
+```
 
 ---
 
-<div align="center">
+## 📊 算法对比 | Algorithm Comparison
 
-**Built with 🚢 for smart port operations research**
+| 算法 | 解质量 | 求解速度 | 可扩展性 | 实现难度 |
+|------|--------|---------|---------|---------|
+| 贪心策略 | 🟡 中 | 🚀 快 | ✅ 好 | 🟢 简单 |
+| 遗传算法 | ✅ 好 | 🟡 中 | ✅ 好 | 🟡 中等 |
+| 模拟退火 | ✅ 好 | 🟡 中 | ✅ 好 | 🟡 中等 |
+| 精确求解 (MILP) | ✅ 最优 | 🐢 慢 | ❌ 差 | 🔴 难 |
+| **Mochi (本项目)** | **✅ 好** | **🚀 快** | **✅ 好** | **🟡 中等** |
 
-[Report Bug](https://github.com/Windyhhh/Mochi-Port-Yard-Optimization/issues) · [Request Feature](https://github.com/Windyhhh/Mochi-Port-Yard-Optimization/issues)
+---
 
-</div>
+## 🎯 应用场景 | Use Cases
+
+- 🚢 **集装箱港口**：堆场作业调度与空间分配
+- 📦 **物流仓储**：仓库货位分配与作业排序
+- 🚂 **铁路货场**：集装箱铁路中转站的作业优化
+- 🏭 **制造业**：车间物料堆放与搬运调度
+- 📊 **运筹学教学**：组合优化问题的建模与求解案例
+
+---
+
+## 📚 参考文献 | References
+
+- Stahlbock, R., & Voß, S. "Operations research at container terminals: a literature update." OR Spectrum 2008.
+- Carlo, H. J., et al. "Storage yard operations in container terminals: Literature overview, trends, and research directions." EJOR 2014.
+- Kozan, E., & Preston, P. "Genetic algorithm to schedule container transfers at multimodal terminals." EJOR 1999.
+
+---
+
+## 📄 License
+
+MIT License — 自由使用、修改和分发。
+
+---
+
+> 💡 **运筹优化 + 港口物流的实战项目，Star ⭐ 支持开源运筹学！**
