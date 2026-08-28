@@ -59,6 +59,15 @@ Mochi-Port-Yard-Optimization/
 
 ---
 
+
+## Results
+
+<div align="center">
+  <img src="results/train_loss.png" alt="Training loss" width="70%"/>
+  <img src="results/yard_plot_fixed.png" alt="Yard plot (fixed)" width="70%"/>
+</div>
+
+---
 ## License
 
 MIT — free to use, modify and distribute.
